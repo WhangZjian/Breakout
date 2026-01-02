@@ -8,9 +8,11 @@
 #include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <cmath>
+#include <set>
 
-Game::Game() : width(9), height(18), paddleWidth(3), score(0), lives(3), level(1), 
-               gameRunning(false), paused(false) {
+Game::Game() : width(19), height(18), paddleWidth(7), score(0), lives(3), level(1), 
+               gameRunning(false), paused(false), EndGameCreating(false) {
     paddleX = width / 2;
     srand(time(nullptr));
 }
@@ -22,7 +24,7 @@ void Game::run() {
 
 void Game::initializeGame() {
     config.loadDefault();
-    endgame.loadEmpty(width, height);
+    loadLevel("Level_1");
 }
 
 void Game::mainMenu() {
@@ -70,6 +72,7 @@ void Game::startGame() {
     paused = false;
     score = 0;
     lives = 3;
+    fps = 50;
     level = config.initialLevel;
     
     // Initialize ball
@@ -78,12 +81,10 @@ void Game::startGame() {
     ball.dx = 0;
     ball.dy = 0;
     ball.attached = true;
+    ball.speed = config.ballSpeed / fps * 5.0;
     
     // Initialize paddle
     paddleX = width / 2 - paddleWidth / 2;
-    
-    // Load level
-    loadLevel();
     
     gameLoop();
 }
@@ -98,9 +99,9 @@ void Game::gameLoop() {
             drawGame();
             
             // Control game speed based on ball speed
-            double speed = config.ballSpeed;
-            int delay = static_cast<int>(1000.0 / speed);
-            std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+            // double speed = config.ballSpeed;
+            // int delay = 50; //static_cast<int>(1000.0 / speed);
+            std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(1000.0 / fps)));
         } else {
             processInput();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -137,8 +138,8 @@ void Game::processInput() {
         case ' ':
             if (ball.attached) {
                 ball.attached = false;
-                ball.dx = (rand() % 3 - 1) * 0.5; // -0.5, 0, or 0.5
-                ball.dy = -1.0;
+                ball.dx = (rand() % 3 - 1) * 0.5 * ball.speed; // -0.5, 0, or 0.5
+                ball.dy = -ball.cacdy();
             }
             break;
         case 'p':
@@ -146,7 +147,7 @@ void Game::processInput() {
             showPauseMenu();
             break;
         case 'r':
-            loadLevel();
+            loadLevel("Level_" + static_cast<char>('0'+level));
             break;
     }
 }
@@ -155,7 +156,7 @@ void Game::updateGame() {
     auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastUpdate);
     
-    if (elapsed.count() < 50) return; // Update every 50ms
+//    if (elapsed.count() < 50) return; // Update every 50ms
     
     lastUpdate = now;
     
@@ -172,17 +173,16 @@ void Game::updateGame() {
     
     // Check if level complete
     bool levelComplete = true;
-    for (const auto& row : bricks) {
-        for (const auto& brick : row) {
-            if (brick.type != BrickType::EMPTY && brick.type != BrickType::INDESTRUCTIBLE) {
-                levelComplete = false;
-                break;
-            }
+    for (const auto& brick : bricks) {
+        if (brick.type != BrickType::EMPTY && brick.type != BrickType::INDESTRUCTIBLE) {
+            levelComplete = false;
+            break;
         }
         if (!levelComplete) break;
     }
     
     if (levelComplete) {
+        drawGame();
         nextLevel();
     }
 }
@@ -199,6 +199,17 @@ void Game::handleCollisions() {
         ball.y = 0;
     }
     
+    // Paddle collision
+    if (ball.y >= height - 2 && ball.dy > 0) {
+        if (ball.x >= paddleX && ball.x <= paddleX + paddleWidth) {
+            double hitPos = (ball.x - paddleX) / paddleWidth;
+            // double dx = (hitPos - 0.5) * 2.0; // -1 to 1
+            ball.dx = (hitPos - 0.5) * ball.speed * 1.5;
+            ball.dy = -ball.cacdy();
+            ball.y = height - 2;
+        }
+    }
+    
     // Bottom collision (lose life)
     if (ball.y >= height) {
         lives--;
@@ -212,52 +223,39 @@ void Game::handleCollisions() {
         return;
     }
     
-    // Paddle collision
-    if (ball.y >= height - 2 && ball.dy > 0) {
-        if (ball.x >= paddleX && ball.x <= paddleX + paddleWidth) {
-            double hitPos = (ball.x - paddleX) / paddleWidth;
-            double dx = (hitPos - 0.5) * 2.0; // -1 to 1
-            ball.dx = dx * 1.5;
-            ball.dy = -abs(ball.dy);
-            ball.y = height - 2;
-        }
-    }
-    
     // Brick collisions
-    for (auto& row : bricks) {
-        for (auto& brick : row) {
-            if (brick.type == BrickType::EMPTY) continue;
+    for (auto& brick : bricks) {
+        if (brick.type == BrickType::EMPTY) continue;
+        
+        if (ball.x >= brick.x  && ball.x <= brick.x + 1.3 &&
+            ball.y >= brick.y  && ball.y <= brick.y + 1.3) {
             
-            if (ball.x >= brick.x && ball.x <= brick.x + 1 &&
-                ball.y >= brick.y && ball.y <= brick.y + 1) {
-                
-                // Handle different brick types
-                if (brick.type == BrickType::NORMAL) {
+            // Handle different brick types
+            if (brick.type == BrickType::NORMAL) {
+                brick.type = BrickType::EMPTY;
+                score += 10;
+            } else if (brick.type == BrickType::DURABLE) {
+                brick.durability--;
+                if (brick.durability <= 0) {
                     brick.type = BrickType::EMPTY;
-                    score += 10;
-                } else if (brick.type == BrickType::DURABLE) {
-                    brick.durability--;
-                    if (brick.durability <= 0) {
-                        brick.type = BrickType::EMPTY;
-                    }
-                    score += 5;
                 }
-                // INDESTRUCTIBLE bricks don't break
-                
-                // Bounce ball
-                double brickCenterX = brick.x + 0.5;
-                double brickCenterY = brick.y + 0.5;
-                double dx = ball.x - brickCenterX;
-                double dy = ball.y - brickCenterY;
-                
-                if (abs(dx) > abs(dy)) {
-                    ball.dx = -ball.dx;
-                } else {
-                    ball.dy = -ball.dy;
-                }
-                
-                return; // Only handle one collision per frame
+                score += 5;
             }
+            // INDESTRUCTIBLE bricks don't break
+            
+            // Bounce ball
+            double brickCenterX = brick.x + 0.5;
+            double brickCenterY = brick.y + 0.5;
+            double dx = ball.x - brickCenterX;
+            double dy = ball.y - brickCenterY;
+            
+            if (abs(dx) > abs(dy)) {
+                ball.dx = -ball.dx;
+            } else {
+                ball.dy = -ball.dy;
+            }
+            
+            return; // Only handle one collision per frame
         }
     }
 }
@@ -266,10 +264,12 @@ void Game::drawGame() {
     Utils::clearScreen();
     
     // Draw score and status
-    std::cout << "Score: " << score << " | Lives: " << lives << " | Level: " << level << std::endl;
+    if (!EndGameCreating) {
+        std::cout << "Score: " << score << " | Lives: " << lives << " | Level: " << level << std::endl;   
+    }
+
+    // Draw game area    
     std::cout << std::string(width * 2 + 2, '-') << std::endl;
-    
-    // Draw game area
     for (int y = 0; y < height; y++) {
         std::cout << "|";
         for (int x = 0; x < width; x++) {
@@ -281,20 +281,18 @@ void Game::drawGame() {
             
             // Check for bricks
             bool brickFound = false;
-            for (const auto& row : bricks) {
-                for (const auto& brick : row) {
-                    if (brick.x == x && brick.y == y && brick.type != BrickType::EMPTY) {
-                        std::cout << static_cast<char>(brick.type) << static_cast<char>(brick.type);
-                        brickFound = true;
-                        break;
-                    }
+            for (const auto& brick : bricks) {
+                if (brick.x == x && brick.y == y && brick.type != BrickType::EMPTY) {
+                    std::cout << static_cast<char>(brick.type) << static_cast<char>(brick.type);
+                    brickFound = true;
+                    break;
                 }
                 if (brickFound) break;
             }
             if (brickFound) continue;
             
             // Check for paddle
-            if (y == height - 1 && x >= paddleX && x < paddleX + paddleWidth) {
+            if (EndGameCreating==false && y == height - 1 && x >= paddleX && x < paddleX + paddleWidth) {
                 std::cout << "--";
                 continue;
             }
@@ -306,41 +304,46 @@ void Game::drawGame() {
     }
     
     std::cout << std::string(width * 2 + 2, '-') << std::endl;
-    
-    if (paused) {
+    if (EndGameCreating) {
+        std::cout << "P x y type -- place a type brick at (x,y)" << std::endl;
+        std::cout << "D x y -- delete the birck at (x,y)" << std::endl;
+        std::cout << "f -- finish placing" << std::endl;
+        std::cout << "q -- quit placing" << std::endl;
+    }
+    else if (paused) {
         std::cout << "PAUSED - Press 'p' to continue, 's' to save, 'r' to restart" << std::endl;
-    } else {
+    } 
+    else {
         std::cout << "Controls: a-left, d-right, space-launch, p-pause, r-restart" << std::endl;
     }
 }
 
-void Game::loadLevel() {
+void Game::updateLevel() {
+    width = endgame.width*2+1;
+    height = endgame.height;
+    level = endgame.initialLevel;
+    bricks = endgame.bricks;
+}
+
+bool Game::loadLevel(const std::string& Level_Name) {
     bricks.clear();
-    
-    // Create some sample bricks for the level
-    for (int y = 0; y < 4; y++) {
-        std::vector<Brick> row;
-        for (int x = 0; x < width; x++) {
-            BrickType type;
-            if (y == 0 && x % 3 == 0) {
-                type = BrickType::INDESTRUCTIBLE;
-            } else if (y == 1 && x % 2 == 0) {
-                type = BrickType::DURABLE;
-            } else {
-                type = BrickType::NORMAL;
-            }
-            row.emplace_back(x, y, type);
-        }
-        bricks.push_back(row);
+
+    if (endgame.loadFromFile(Level_Name)) {
+        //std::cout << bricks.size() << std::endl;
+        //exit(0);
+        updateLevel();
+        ball.attached = true;
+        ball.x = paddleX + paddleWidth / 2.0;
+        ball.y = height - 2;
+        return 1;
+    } else {
+        std::cout << "Failed to load " << Level_Name << "!" << std::endl;
+        return 0;
     }
-    
-    // Reset ball position
-    ball.attached = true;
-    ball.x = paddleX + paddleWidth / 2.0;
-    ball.y = height - 2;
 }
 
 void Game::nextLevel() {
+    std::cout << "Level " << level << " complete! Loading next level..." << std::endl;
     level++;
     if (level > 3) { // Simple level cap
         std::cout << "Congratulations! You beat all levels!" << std::endl;
@@ -349,14 +352,14 @@ void Game::nextLevel() {
         return;
     }
     
-    std::cout << "Level " << level << " complete! Loading next level..." << std::endl;
     Utils::waitForKey();
-    loadLevel();
+    loadLevel("Level_" + static_cast<char>('0'+level));
 }
 
 void Game::gameOver() {
     drawGame();
     std::cout << "GAME OVER! Final Score: " << score << std::endl;
+    loadLevel("Level_1");
     Utils::waitForKey();
     gameRunning = false;
 }
@@ -407,35 +410,107 @@ void Game::loadConfig() {
 }
 
 void Game::createEndGame() {
+    EndGame oldendgame = endgame;
+    EndGameCreating = true;
+
     std::string filename;
     std::cout << "Enter endgame name (q to cancel): ";
     std::cin >> filename;
     
     if (filename == "q") return;
     
-    EndGame newEndGame;
-    newEndGame.filename = filename;
+    endgame.filename = filename;
+    endgame.bricks.clear();
     
     std::cout << "Enter width (8-20): ";
-    std::cin >> newEndGame.width;
+    std::cin >> endgame.width;
     std::cout << "Enter height (8-20): ";
-    std::cin >> newEndGame.height;
+    std::cin >> endgame.height;
     std::cout << "Enter initial level: ";
-    std::cin >> newEndGame.initialLevel;
+    std::cin >> endgame.initialLevel;
     
     // Simple brick placement - in a full implementation, this would be interactive
-    newEndGame.bricks.emplace_back(2, 2, BrickType::NORMAL);
-    newEndGame.bricks.emplace_back(4, 2, BrickType::DURABLE);
-    newEndGame.bricks.emplace_back(6, 2, BrickType::INDESTRUCTIBLE);
+    updateLevel();
+    drawGame();
+
+    std::set<std::pair<int,int>> findbrick; 
+
+    while (true) {
+        char command;
+        std::cin >> command;
+        
+        if (command == 'P') {
+            int x, y;
+            char typeChar;
+            std::cin >> x >> y >> typeChar;
+            x = 2 * x + 1;
+
+            if (x>=width || x<0 || y>=height-3 || y<0){
+                drawGame();
+                std::cout << "Invaild coordinate!" << std::endl;
+                continue;
+            }
+            if (findbrick.count({x, y})){
+                drawGame();
+                std::cout << "Brick exists!" << std::endl;
+                continue;
+            }
+            findbrick.insert({x, y});
+            
+            BrickType type;
+            switch (typeChar) {
+                case '@': type = BrickType::NORMAL; break;
+                case '#': type = BrickType::DURABLE; break;
+                case '*': type = BrickType::INDESTRUCTIBLE; break;
+                default: continue;
+            }
+            
+            endgame.bricks.emplace_back(x, y, type);
+            updateLevel();
+            drawGame();
+        }
+        else if (command=='D'){
+            int x, y;
+            bool isDeleted = false;
+            std::cin >> x >> y;
+            x = 2 * x + 1;
+
+            for(auto it = endgame.bricks.begin(); it != endgame.bricks.end(); it++){
+                if ((*it).x==x && (*it).y==y) {
+                    auto itnext = it + 1;
+                    endgame.bricks.erase(it, itnext);
+                    updateLevel();
+                    drawGame();
+                    std::cout << "Brick deleted!" << std::endl;
+                    isDeleted = true;
+                    break;
+                }
+            }
+
+            if(!isDeleted) {
+                drawGame();
+                std::cout << "Brick not found!" << std::endl;
+            }
+        }
+        else if (command=='f') {
+            std::cout << "End game created successfully!" << std::endl;
+            endgame.saveToFile();
+            break;
+        }
+        else if (command == 'q') {
+            break;
+        }
+        else {
+            drawGame();
+            std::cout << "Invaild command!" << std::endl;
+        }
+    }
     
-    newEndGame.saveToFile();
-    endgame = newEndGame;
+    // 复原设置
+    endgame=oldendgame;
+    updateLevel();
+    EndGameCreating = false;
     
-    // Update game dimensions
-    width = newEndGame.width;
-    height = newEndGame.height;
-    
-    std::cout << "End game created successfully!" << std::endl;
     Utils::waitForKey();
 }
 
@@ -449,9 +524,7 @@ void Game::loadEndGame() {
     
     if (endgame.loadFromFile(filename)) {
         std::cout << "End game loaded successfully!" << std::endl;
-        width = endgame.width;
-        height = endgame.height;
-        level = endgame.initialLevel;
+        updateLevel();
     } else {
         std::cout << "Failed to load end game!" << std::endl;
     }
@@ -465,16 +538,14 @@ void Game::saveEndGameFromPause() {
     
     EndGame newEndGame;
     newEndGame.filename = filename;
-    newEndGame.width = width;
+    newEndGame.width = width / 2;
     newEndGame.height = height;
     newEndGame.initialLevel = level;
     
     // Copy current bricks
-    for (const auto& row : bricks) {
-        for (const auto& brick : row) {
-            if (brick.type != BrickType::EMPTY) {
-                newEndGame.bricks.push_back(brick);
-            }
+    for (const auto& brick : bricks) {
+        if (brick.type != BrickType::EMPTY) {
+            newEndGame.bricks.push_back(brick);
         }
     }
     

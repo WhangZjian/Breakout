@@ -7,7 +7,7 @@ Config::Config() : filename("default"), ballSpeed(5), randomSeed(-1), initialLev
 
 void Config::loadDefault() {
     filename = "default";
-    ballSpeed = 5;
+    ballSpeed = 5.0;
     randomSeed = -1;
     initialLevel = 1;
 }

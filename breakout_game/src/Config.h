@@ -5,7 +5,7 @@
 
 struct Config {
     std::string filename;
-    int ballSpeed;
+    double ballSpeed;
     int randomSeed;
     int initialLevel;
     

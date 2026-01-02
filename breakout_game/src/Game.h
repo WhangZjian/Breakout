@@ -8,15 +8,21 @@
 #include <string>
 #include <chrono>
 #include <thread>
+#include <cmath>
+#include <string>
 
 // 移除 BrickType 和 Brick 的定义，它们现在在 Brick.h 中
 
 struct Ball {
     double x, y;
     double dx, dy;
+    double speed;
     bool attached;
     
     Ball() : x(0), y(0), dx(0), dy(0), attached(true) {}
+    double cacdy() {
+        return std::sqrt(speed*speed-dx*dx);
+    }
 };
 
 class Game {
@@ -25,12 +31,14 @@ private:
     int width, height;
     int paddleX, paddleWidth;
     Ball ball;
-    std::vector<std::vector<Brick>> bricks;
+    std::vector<Brick> bricks;
     int score;
     int lives;
     int level;
+    int fps;
     bool gameRunning;
     bool paused;
+    bool EndGameCreating;
     
     // Configuration
     Config config;
@@ -52,7 +60,8 @@ private:
     void processInput();
     void updateGame();
     void handleCollisions();
-    void loadLevel();
+    bool loadLevel(const std::string &Level_Name);
+    void updateLevel();
     void nextLevel();
     void gameOver();
     void showPauseMenu();
