@@ -23,8 +23,9 @@ void Game::run() {
 }
 
 void Game::initializeGame() {
-    config.loadDefault();
-    loadLevel("Level_1");
+    config.loadFromFile("default");
+    // 默认关卡
+    CreateLevel(1);
 }
 
 void Game::mainMenu() {
@@ -72,8 +73,15 @@ void Game::startGame() {
     paused = false;
     score = 0;
     lives = 3;
-    fps = 50;
+    fps = 100;
+        
     level = config.initialLevel;
+    if (config.randomSeed != -1) {
+        srand(config.randomSeed);
+    }
+    else {
+        srand(time(0));
+    }
     
     // Initialize ball
     ball.x = width / 2.0;
@@ -81,7 +89,8 @@ void Game::startGame() {
     ball.dx = 0;
     ball.dy = 0;
     ball.attached = true;
-    ball.speed = config.ballSpeed / fps * 5.0;
+    // 球每帧的移动距离，第二、三关分别为 1.3 1.6 倍速
+    ball.speed = (config.ballSpeed + 5) / fps * 3.0 * (0.3 * level + 0.7);
     
     // Initialize paddle
     paddleX = width / 2 - paddleWidth / 2;
@@ -98,9 +107,7 @@ void Game::gameLoop() {
             updateGame();
             drawGame();
             
-            // Control game speed based on ball speed
-            // double speed = config.ballSpeed;
-            // int delay = 50; //static_cast<int>(1000.0 / speed);
+            // 基于帧数控制时间
             std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(1000.0 / fps)));
         } else {
             processInput();
@@ -138,6 +145,7 @@ void Game::processInput() {
         case ' ':
             if (ball.attached) {
                 ball.attached = false;
+                // 保证速度大小固定
                 ball.dx = (rand() % 3 - 1) * 0.5 * ball.speed; // -0.5, 0, or 0.5
                 ball.dy = -ball.cacdy();
             }
@@ -155,8 +163,6 @@ void Game::processInput() {
 void Game::updateGame() {
     auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastUpdate);
-    
-//    if (elapsed.count() < 50) return; // Update every 50ms
     
     lastUpdate = now;
     
@@ -189,14 +195,18 @@ void Game::updateGame() {
 
 void Game::handleCollisions() {
     // Wall collisions
-    if (ball.x <= 0 || ball.x >= width - 1) {
+    // 右边的墙坐标修正为 18
+    bool isCollision = false;
+    if (ball.x <= 0.3 || ball.x >= width - 0.3) {
         ball.dx = -ball.dx;
-        ball.x = (ball.x <= 0) ? 0 : width - 1;
+        ball.x = (ball.x <= 0.3) ? 0.3 : width - 0.3;
+        isCollision = true;
     }
     
-    if (ball.y <= 0) {
+    if (ball.y <= 0.3) {
         ball.dy = -ball.dy;
-        ball.y = 0;
+        ball.y = 0.3;
+        isCollision = true;
     }
     
     // Paddle collision
@@ -207,7 +217,12 @@ void Game::handleCollisions() {
             ball.dx = (hitPos - 0.5) * ball.speed * 1.5;
             ball.dy = -ball.cacdy();
             ball.y = height - 2;
+            isCollision = true;
         }
+    }
+
+    if (isCollision) {
+        return;
     }
     
     // Bottom collision (lose life)
@@ -226,9 +241,10 @@ void Game::handleCollisions() {
     // Brick collisions
     for (auto& brick : bricks) {
         if (brick.type == BrickType::EMPTY) continue;
-        
-        if (ball.x >= brick.x  && ball.x <= brick.x + 1.3 &&
-            ball.y >= brick.y  && ball.y <= brick.y + 1.3) {
+        // 适当考虑球的碰撞体积，球坐标为球心坐标
+        // 砖块坐标为左上角坐标
+        if (ball.x >= brick.x - 0.3  && ball.x <= brick.x + 1.3 &&
+            ball.y >= brick.y - 0.3  && ball.y <= brick.y + 1.3) {
             
             // Handle different brick types
             if (brick.type == BrickType::NORMAL) {
@@ -249,7 +265,7 @@ void Game::handleCollisions() {
             double dx = ball.x - brickCenterX;
             double dy = ball.y - brickCenterY;
             
-            if (abs(dx) > abs(dy)) {
+            if (fabs(dx) > fabs(dy)) {
                 ball.dx = -ball.dx;
             } else {
                 ball.dy = -ball.dy;
@@ -264,6 +280,7 @@ void Game::drawGame() {
     Utils::clearScreen();
     
     // Draw score and status
+    //
     if (!EndGameCreating) {
         std::cout << "Score: " << score << " | Lives: " << lives << " | Level: " << level << std::endl;   
     }
@@ -274,6 +291,7 @@ void Game::drawGame() {
         std::cout << "|";
         for (int x = 0; x < width; x++) {
             // Check for ball
+            // 球坐标固定为球心坐标
             if (!ball.attached && static_cast<int>(ball.x) == x && static_cast<int>(ball.y) == y) {
                 std::cout << "()";
                 continue;
@@ -318,6 +336,28 @@ void Game::drawGame() {
     }
 }
 
+void Game::CreateLevel(int id) {
+    endgame.bricks.clear();
+    endgame.width = 9;
+    endgame.height = 18;
+    endgame.initialLevel = id;
+    for (int y = 0; y < 3 + id; y++) {
+        for (int tx = 1; tx < 19; tx+=2) {
+            int x=tx/2, rd = rand() % (6);
+            BrickType type;
+            if (y % 4 == 2 && x % 4 < std::min(id, 2)){
+                type = BrickType::INDESTRUCTIBLE;
+            } else if (rd < id) {
+                type = BrickType::DURABLE;
+            } else {
+                type = BrickType::NORMAL;
+            }
+            endgame.bricks.emplace_back(tx, y, type);
+        }
+    }
+    updateLevel();
+}
+
 void Game::updateLevel() {
     width = endgame.width*2+1;
     height = endgame.height;
@@ -345,6 +385,7 @@ bool Game::loadLevel(const std::string& Level_Name) {
 void Game::nextLevel() {
     std::cout << "Level " << level << " complete! Loading next level..." << std::endl;
     level++;
+    lives += 2;
     if (level > 3) { // Simple level cap
         std::cout << "Congratulations! You beat all levels!" << std::endl;
         Utils::waitForKey();
@@ -352,14 +393,20 @@ void Game::nextLevel() {
         return;
     }
     
+    ball.x = width / 2.0;
+    ball.y = height - 2;
+    ball.dx = 0;
+    ball.dy = 0;
+    ball.attached = true;
+    
     Utils::waitForKey();
-    loadLevel("Level_" + static_cast<char>('0'+level));
+    CreateLevel(level);
 }
 
 void Game::gameOver() {
     drawGame();
     std::cout << "GAME OVER! Final Score: " << score << std::endl;
-    loadLevel("Level_1");
+    initializeGame();
     Utils::waitForKey();
     gameRunning = false;
 }
@@ -390,7 +437,8 @@ void Game::createConfig() {
     std::cin >> newConfig.initialLevel;
     
     newConfig.saveToFile();
-    config = newConfig;
+    // 不加载 config
+    // config = newConfig;
 }
 
 void Game::loadConfig() {
@@ -403,6 +451,7 @@ void Game::loadConfig() {
     
     if (config.loadFromFile(filename)) {
         std::cout << "Config loaded successfully!" << std::endl;
+        CreateLevel(config.initialLevel);
     } else {
         std::cout << "Failed to load config!" << std::endl;
     }

@@ -15,6 +15,7 @@ struct EndGame {
     void loadEmpty(int w, int h);
     bool loadFromFile(const std::string& filename);
     void saveToFile();
+    bool islegal();
 };
 
 #endif

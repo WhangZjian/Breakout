@@ -62,6 +62,7 @@ private:
     void handleCollisions();
     bool loadLevel(const std::string &Level_Name);
     void updateLevel();
+    void CreateLevel(int id);
     void nextLevel();
     void gameOver();
     void showPauseMenu();
